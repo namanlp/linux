@@ -39,6 +39,7 @@ MODULE_ALIAS("wmi:5FB7F034-2C63-45e9-BE91-3D44E2C707E4");
 #define HPWMI_BIOS_GUID "5FB7F034-2C63-45e9-BE91-3D44E2C707E4"
 #define HP_OMEN_EC_THERMAL_PROFILE_OFFSET 0x95
 #define zero_if_sup(tmp) (zero_insize_support?0:sizeof(tmp)) // use when zero insize is required
+#define HPWMI_HOTKEY_RELEASE_FLAG (1<<16)
 
 /* DMI board names of devices that should use the omen specific path for
  * thermal profiles.
@@ -91,6 +92,7 @@ enum hp_wmi_event_ids {
 	HPWMI_BATTERY_CHARGE_PERIOD	= 0x10,
 	HPWMI_SANITIZATION_MODE		= 0x17,
 	HPWMI_SMART_EXPERIENCE_APP	= 0x21,
+	HPWMI_OMEN_KEY          	= 0x1D
 };
 
 /*
@@ -219,6 +221,7 @@ static const struct key_entry hp_wmi_keymap[] = {
 	{ KE_KEY, 0x21a9,  { KEY_TOUCHPAD_OFF } },
 	{ KE_KEY, 0x121a9, { KEY_TOUCHPAD_ON } },
 	{ KE_KEY, 0x231b,  { KEY_HELP } },
+    { KE_KEY, 0x21A5,  { KEY_F15 } }, // Omen Key
 	{ KE_END, 0 }
 };
 
@@ -762,7 +765,13 @@ static void hp_wmi_notify(u32 value, void *context)
 	int key_code;
 
 	status = wmi_get_event_data(value, &response);
-	if (status != AE_OK) {
+	if (status == AE_NOT_FOUND)
+	{
+	// We've been woken up without any event data
+	// Some models do this when the Omen hotkey is pressed
+		event_id = HPWMI_OMEN_KEY;
+	}
+	else if (status != AE_OK) {
 		pr_info("bad event status 0x%x\n", status);
 		return;
 	}
@@ -810,8 +819,11 @@ static void hp_wmi_notify(u32 value, void *context)
 	case HPWMI_SMART_ADAPTER:
 		break;
 	case HPWMI_BEZEL_BUTTON:
-		key_code = hp_wmi_read_int(HPWMI_HOTKEY_QUERY);
-		if (key_code < 0)
+	case HPWMI_OMEN_KEY:
+	key_code = hp_wmi_read_int(HPWMI_HOTKEY_QUERY);
+	// Some hotkeys generate both press and release events
+	// Just drop the release events.
+		if (key_code < 0 || (key_code & HPWMI_HOTKEY_RELEASE_FLAG))
 			break;
 
 		if (!sparse_keymap_report_event(hp_wmi_input_dev,
